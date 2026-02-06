@@ -1,0 +1,31 @@
+# ---------------- Python ----------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ---------------- Virtual Environments ----------------
+venv/
+.env
+ENV/
+env/
+.venv/
+
+# ---------------- IDEs ----------------
+.idea/
+.vscode/
+
+# ---------------- OS ----------------
+.DS_Store
+Thumbs.db
+
+# ---------------- App-generated files ----------------
+Audios/
+
+# ---------------- Downloaded dependencies ----------------
+bin/
+ffmpeg/
+deno/
+
+# ---------------- Logs ----------------
+*.log

@@ -5,9 +5,19 @@ from PyQt6 import QtCore, QtWidgets
 from PyQt6.QtGui import QIcon
 import yt_dlp
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Helper for PyInstaller
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
 
-BIN_DIR = os.path.join(BASE_DIR, "bin", "ffmpeg")
+
+BASE_DIR = os.path.abspath(".")  # For output folders
+BIN_DIR = resource_path(os.path.join("bin", "ffmpeg"))
 FFMPEG_PATH = os.path.join(BIN_DIR, "ffmpeg.exe")
 FFPROBE_PATH = os.path.join(BIN_DIR, "ffprobe.exe")
 ATOMIC_PATH = os.path.join(BIN_DIR, "AtomicParsley.exe")
@@ -112,15 +122,14 @@ class DownloadWorker(QtCore.QThread):
                 {"key": "FFmpegMetadata"},
                 {"key": "EmbedThumbnail"},
             ],
-            # Ensure correct upload date
-            "dateafter": None,
         }
 
-        # Workaround to correctly extract upload date as YYYY
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # Extract info first to ensure correct date
             info = ydl.extract_info(self.url, download=False)
             if "upload_date" in info and len(info["upload_date"]) >= 8:
-                info["upload_date"] = info["upload_date"][:4]  # keep only year
+                # yt-dlp uses YYYYMMDD format, we keep full date for metadata
+                info["upload_date"] = info["upload_date"]  # full YYYYMMDD
             ydl.download([self.url])
 
     def download_image(self):
@@ -131,9 +140,6 @@ class DownloadWorker(QtCore.QThread):
             "skip_download": True,
             "writethumbnail": True,
             "outtmpl": os.path.join(IMAGE_DIR, "%(title)s.%(ext)s"),
-            "postprocessors": [
-                {"key": "FFmpegMetadata"},  # embed metadata into thumbnail
-            ],
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -144,7 +150,7 @@ class App(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("yt-dlp GUI")
-        self.setWindowIcon(QIcon(os.path.join(BASE_DIR, "app_icon.ico")))
+        self.setWindowIcon(QIcon(resource_path("app_icon.ico")))
 
         self.url = QtWidgets.QLineEdit()
         self.url.setPlaceholderText("Paste URL here")
@@ -179,6 +185,10 @@ class App(QtWidgets.QWidget):
 if __name__ == "__main__":
     app = QtWidgets.QApplication(sys.argv)
     check_dependencies()
+    # Create main folders if they don't exist
+    os.makedirs(AUDIO_DIR, exist_ok=True)
+    os.makedirs(VIDEO_DIR, exist_ok=True)
+    os.makedirs(IMAGE_DIR, exist_ok=True)
     w = App()
     w.show()
     sys.exit(app.exec())

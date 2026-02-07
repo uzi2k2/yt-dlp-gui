@@ -21,6 +21,8 @@ Thumbs.db
 
 # ---------------- App-generated files ----------------
 Audios/
+Videos/
+Images/
 
 # ---------------- Downloaded dependencies ----------------
 bin/
@@ -29,3 +31,8 @@ deno/
 
 # ---------------- Logs ----------------
 *.log
+
+# ---------------- PyInstaller ----------------
+build/
+dist/
+*.spec

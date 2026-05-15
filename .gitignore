@@ -24,6 +24,9 @@ Audios/
 Videos/
 Images/
 
+# ---------------- User settings ----------------
+settings.ini
+
 # ---------------- Downloaded dependencies ----------------
 bin/
 ffmpeg/

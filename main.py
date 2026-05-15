@@ -1,140 +1,351 @@
 import os
-import sys
 import re
-import subprocess
-from dataclasses import dataclass
+import sys
 
-from PyQt6 import QtCore, QtWidgets
-from PyQt6.QtWidgets import QAbstractItemView
-from PyQt6.QtGui import QIcon
+from dataclasses import dataclass
 
 import yt_dlp
 
+from PyQt6 import QtCore, QtWidgets
+from PyQt6.QtGui import QIcon
+from PyQt6.QtWidgets import (
+    QApplication,
+    QFileDialog,
+    QFrame,
+    QGridLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPlainTextEdit,
+    QProgressBar,
+    QPushButton,
+    QComboBox,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+    QHeaderView,
+)
 
-# ---------------- PATHS ----------------
 
-BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+# =========================================================
+# PATHS
+# =========================================================
 
-BIN_DIR = os.path.join(BASE_DIR, "bin", "ffmpeg")
+if getattr(sys, "frozen", False):
 
-AUDIO_DIR = os.path.join(BASE_DIR, "Audios")
-VIDEO_DIR = os.path.join(BASE_DIR, "Videos")
-IMAGE_DIR = os.path.join(BASE_DIR, "Images")
+    BASE_DIR = os.path.dirname(sys.executable)
+
+    # IMPORTANT FOR PYINSTALLER
+    INTERNAL_DIR = getattr(sys, "_MEIPASS", BASE_DIR)
+
+else:
+
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+    INTERNAL_DIR = BASE_DIR
 
 
-# ---------------- HELPERS ----------------
+# =========================================================
+# FFMPEG PATHS
+# =========================================================
+
+FFMPEG_DIR = os.path.join(
+    INTERNAL_DIR,
+    "bin",
+    "ffmpeg"
+)
+
+FFMPEG_EXE = os.path.join(
+    FFMPEG_DIR,
+    "ffmpeg.exe"
+)
+
+FFPROBE_EXE = os.path.join(
+    FFMPEG_DIR,
+    "ffprobe.exe"
+)
+
+ATOMICPARSLEY_EXE = os.path.join(
+    FFMPEG_DIR,
+    "AtomicParsley.exe"
+)
+
+DEFAULT_DOWNLOAD_DIR = os.path.join(
+    os.path.expanduser("~"),
+    "Downloads",
+    "yt-dlp GUI"
+)
+
+SETTINGS_FILE = os.path.join(
+    BASE_DIR,
+    "settings.ini"
+)
+
+os.makedirs(DEFAULT_DOWNLOAD_DIR, exist_ok=True)
+
+
+# =========================================================
+# SETTINGS
+# =========================================================
+
+settings = QtCore.QSettings(
+    SETTINGS_FILE,
+    QtCore.QSettings.Format.IniFormat
+)
+
+
+def get_download_dir():
+
+    path = settings.value(
+        "download_dir",
+        DEFAULT_DOWNLOAD_DIR
+    )
+
+    os.makedirs(path, exist_ok=True)
+
+    return path
+
+
+def set_download_dir(path):
+
+    settings.setValue(
+        "download_dir",
+        path
+    )
+
+
+# =========================================================
+# HELPERS
+# =========================================================
 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def clean(text):
+
     return ANSI.sub("", text or "")
 
 
-# ---------------- SANITIZE ----------------
-
-def sanitize(url: str):
+def sanitize(url):
 
     url = url.strip()
 
-    # REMOVE RADIO GARBAGE
-    url = re.sub(r"&start_radio=[^&]+", "", url)
+    url = re.sub(
+        r"&start_radio=[^&]+",
+        "",
+        url
+    )
 
     return url
 
 
-# ---------------- DIRS ----------------
+def safe_playlist_name(name):
 
-def ensure_dirs():
+    if not name:
+        return "Unknown Playlist"
 
-    os.makedirs(AUDIO_DIR, exist_ok=True)
-    os.makedirs(VIDEO_DIR, exist_ok=True)
-    os.makedirs(IMAGE_DIR, exist_ok=True)
+    invalid = r'<>:"/\\|?*'
+
+    for ch in invalid:
+        name = name.replace(ch, "_")
+
+    return name.strip()
 
 
-# ---------------- DATA ----------------
+# =========================================================
+# DATA
+# =========================================================
 
 @dataclass
 class QueueItem:
+
     url: str
     mode: str
+    row: int
     title: str = ""
+    is_playlist: bool = False
 
 
-# ---------------- DRAG & DROP LIST ----------------
+# =========================================================
+# TITLE WORKER
+# =========================================================
 
-class QueueList(QtWidgets.QListWidget):
+class TitleWorker(QtCore.QThread):
 
-    def __init__(self):
+    done = QtCore.pyqtSignal(
+        int,
+        str,
+        bool
+    )
+
+    def __init__(self, row, url, mode):
 
         super().__init__()
 
-        self.setDragEnabled(True)
-        self.setAcceptDrops(True)
-        self.setDropIndicatorShown(True)
+        self.row = row
+        self.url = url
+        self.mode = mode
 
-        self.setSelectionMode(
-            QAbstractItemView.SelectionMode.SingleSelection
+    def run(self):
+
+        is_playlist_mode = "Playlist" in self.mode
+
+        title = self.url
+        is_playlist = is_playlist_mode
+
+        try:
+
+            opts = {
+                "quiet": True,
+                "skip_download": True,
+                "extract_flat": True,
+                "noplaylist": not is_playlist_mode,
+                "no_warnings": True,
+            }
+
+            with yt_dlp.YoutubeDL(opts) as ydl:
+
+                info = ydl.extract_info(
+                    self.url,
+                    download=False
+                )
+
+                if info:
+
+                    if info.get("_type") == "playlist":
+
+                        playlist_title = info.get(
+                            "title",
+                            "Unknown Playlist"
+                        )
+
+                        title = safe_playlist_name(
+                            playlist_title
+                        )
+
+                        is_playlist = True
+
+                    else:
+
+                        title = info.get(
+                            "title",
+                            self.url
+                        )
+
+        except Exception:
+            pass
+
+        self.done.emit(
+            self.row,
+            title,
+            is_playlist
         )
 
-        self.setDragDropMode(
-            QAbstractItemView.DragDropMode.InternalMove
-        )
 
+# =========================================================
+# DOWNLOAD WORKER
+# =========================================================
 
-# ---------------- WORKER ----------------
+class DownloadWorker(QtCore.QThread):
 
-class Worker(QtCore.QThread):
+    progress = QtCore.pyqtSignal(
+        int,
+        float,
+        str,
+        str
+    )
 
-    log = QtCore.pyqtSignal(str)
-    progress = QtCore.pyqtSignal(dict)
-    done = QtCore.pyqtSignal(bool)
+    status = QtCore.pyqtSignal(
+        int,
+        str
+    )
 
-    def __init__(self, item: QueueItem):
+    finished_download = QtCore.pyqtSignal(
+        int,
+        bool,
+        str
+    )
+
+    def __init__(self, item, save_dir):
 
         super().__init__()
 
         self.item = item
+        self.save_dir = save_dir
+
         self.stop_flag = False
 
+    # =====================================================
+
     def stop(self):
+
         self.stop_flag = True
 
-    # ---------------- PROGRESS ----------------
+        try:
+            self.requestInterruption()
+        except Exception:
+            pass
+
+    # =====================================================
 
     def hook(self, d):
 
-        if self.stop_flag:
-            raise yt_dlp.utils.DownloadError("Cancelled")
+        if self.stop_flag or self.isInterruptionRequested():
+
+            raise Exception("CANCELLED_BY_USER")
 
         status = d.get("status")
 
         if status == "downloading":
 
-            self.progress.emit({
-                "pct": clean(d.get("_percent_str", "0%")).strip(),
-                "speed": clean(d.get("_speed_str", "-")),
-                "eta": clean(d.get("_eta_str", "-")),
-            })
+            percent = clean(
+                d.get("_percent_str", "0%")
+            ).replace("%", "").strip()
+
+            try:
+                percent = float(percent)
+            except Exception:
+                percent = 0
+
+            speed = clean(
+                d.get("_speed_str", "-")
+            )
+
+            eta = clean(
+                d.get("_eta_str", "-")
+            )
+
+            self.progress.emit(
+                self.item.row,
+                percent,
+                speed,
+                eta
+            )
 
         elif status == "finished":
 
-            self.log.emit("Finalizing file...")
+            self.status.emit(
+                self.item.row,
+                "Finalizing..."
+            )
 
-    # ---------------- OPTIONS ----------------
+    # =====================================================
 
     def base_opts(self):
 
-        return {
+        opts = {
             "windowsfilenames": True,
             "nooverwrites": False,
 
-            "ffmpeg_location": BIN_DIR,
+            # IMPORTANT
+            "ffmpeg_location": FFMPEG_DIR,
 
             "progress_hooks": [self.hook],
 
             "quiet": True,
-            "no_warnings": False,
+            "no_warnings": True,
 
             "retries": 10,
             "fragment_retries": 10,
@@ -143,9 +354,27 @@ class Worker(QtCore.QThread):
             "embedmetadata": True,
 
             "writethumbnail": True,
+
+            "ignoreerrors": False,
         }
 
-    # ---------------- RUN ----------------
+        # FORCE EXECUTABLE PATHS
+        if os.path.exists(FFMPEG_EXE):
+            opts["ffmpeg_location"] = FFMPEG_DIR
+
+        return opts
+
+    # =====================================================
+
+    def playlist_template(self):
+
+        return os.path.join(
+            self.save_dir,
+            "%(playlist)s",
+            "%(playlist_index)03d - %(title)s.%(ext)s"
+        )
+
+    # =====================================================
 
     def run(self):
 
@@ -153,495 +382,563 @@ class Worker(QtCore.QThread):
 
             url = sanitize(self.item.url)
 
-            if self.item.mode == "Audio":
+            mode = self.item.mode
 
-                ok = self.download_audio(url)
+            # =================================================
+            # AUDIO
+            # =================================================
 
-            elif self.item.mode == "Video":
+            if mode == "Audio":
 
-                ok = self.download_video(url)
+                opts = {
+                    **self.base_opts(),
 
-            elif self.item.mode == "Playlist Audio":
+                    "noplaylist": True,
 
-                ok = self.download_playlist_audio(url)
+                    "format": "bestaudio/best",
 
-            elif self.item.mode == "Playlist Video":
+                    "outtmpl": os.path.join(
+                        self.save_dir,
+                        "%(title)s.%(ext)s"
+                    ),
 
-                ok = self.download_playlist_video(url)
+                    "postprocessors": [
+                        {
+                            "key": "FFmpegExtractAudio",
+                            "preferredcodec": "mp3",
+                            "preferredquality": "320",
+                        },
+                        {
+                            "key": "FFmpegMetadata"
+                        },
+                        {
+                            "key": "EmbedThumbnail"
+                        },
+                    ],
+                }
+
+            # =================================================
+            # VIDEO
+            # =================================================
+
+            elif mode == "Video":
+
+                opts = {
+                    **self.base_opts(),
+
+                    "noplaylist": True,
+
+                    "format": "bv*+ba/b",
+
+                    "merge_output_format": "mp4",
+
+                    "outtmpl": os.path.join(
+                        self.save_dir,
+                        "%(title)s.%(ext)s"
+                    ),
+
+                    "postprocessors": [
+                        {
+                            "key": "FFmpegMetadata"
+                        },
+                        {
+                            "key": "EmbedThumbnail"
+                        },
+                    ],
+                }
+
+            # =================================================
+            # IMAGE
+            # =================================================
+
+            elif mode == "Image":
+
+                opts = {
+                    **self.base_opts(),
+
+                    "noplaylist": True,
+
+                    "skip_download": True,
+
+                    "outtmpl": os.path.join(
+                        self.save_dir,
+                        "%(title)s.%(ext)s"
+                    ),
+
+                    "postprocessors": [
+                        {
+                            "key": "FFmpegThumbnailsConvertor",
+                            "format": "webp",
+                        }
+                    ],
+                }
+
+            # =================================================
+            # PLAYLIST AUDIO
+            # =================================================
+
+            elif mode == "Playlist Audio":
+
+                opts = {
+                    **self.base_opts(),
+
+                    "noplaylist": False,
+                    "extract_flat": False,
+
+                    "format": "bestaudio/best",
+
+                    "outtmpl": self.playlist_template(),
+
+                    "postprocessors": [
+                        {
+                            "key": "FFmpegExtractAudio",
+                            "preferredcodec": "mp3",
+                            "preferredquality": "320",
+                        },
+                        {
+                            "key": "FFmpegMetadata"
+                        },
+                        {
+                            "key": "EmbedThumbnail"
+                        },
+                    ],
+                }
+
+            # =================================================
+            # PLAYLIST VIDEO
+            # =================================================
+
+            elif mode == "Playlist Video":
+
+                opts = {
+                    **self.base_opts(),
+
+                    "noplaylist": False,
+                    "extract_flat": False,
+
+                    "format": "bv*+ba/b",
+
+                    "merge_output_format": "mp4",
+
+                    "outtmpl": self.playlist_template(),
+
+                    "postprocessors": [
+                        {
+                            "key": "FFmpegMetadata"
+                        },
+                        {
+                            "key": "EmbedThumbnail"
+                        },
+                    ],
+                }
+
+            # =================================================
+            # PLAYLIST IMAGE
+            # =================================================
+
+            elif mode == "Playlist Image":
+
+                opts = {
+                    **self.base_opts(),
+
+                    "noplaylist": False,
+                    "extract_flat": False,
+
+                    "skip_download": True,
+
+                    "outtmpl": self.playlist_template(),
+
+                    "postprocessors": [
+                        {
+                            "key": "FFmpegThumbnailsConvertor",
+                            "format": "webp",
+                        }
+                    ],
+                }
 
             else:
+                return
 
-                ok = self.download_image(url)
+            # DEBUG CHECK
+            if not os.path.exists(FFMPEG_EXE):
 
-            self.done.emit(ok)
+                self.finished_download.emit(
+                    self.item.row,
+                    False,
+                    f"ffmpeg.exe not found:\n{FFMPEG_EXE}"
+                )
 
-        except Exception as e:
-
-            self.log.emit(f"ERROR: {e}")
-
-            self.done.emit(False)
-
-    # ---------------- AUDIO ----------------
-
-    def download_audio(self, url):
-
-        try:
-
-            opts = {
-                **self.base_opts(),
-
-                "noplaylist": True,
-
-                "format": "bestaudio/best",
-
-                "outtmpl": os.path.join(
-                    AUDIO_DIR,
-                    "%(title)s.%(ext)s"
-                ),
-
-                "postprocessors": [
-                    {
-                        "key": "FFmpegExtractAudio",
-                        "preferredcodec": "mp3",
-                        "preferredquality": "320",
-                    },
-                    {
-                        "key": "FFmpegMetadata"
-                    },
-                    {
-                        "key": "EmbedThumbnail"
-                    },
-                ],
-            }
+                return
 
             with yt_dlp.YoutubeDL(opts) as ydl:
 
                 ydl.download([url])
 
-            return True
+            self.finished_download.emit(
+                self.item.row,
+                True,
+                "Finished"
+            )
 
         except Exception as e:
 
-            self.log.emit(str(e))
+            error_text = str(e)
 
-            return False
+            if (
+                self.stop_flag
+                or "CANCELLED_BY_USER" in error_text
+            ):
 
-    # ---------------- VIDEO ----------------
+                self.finished_download.emit(
+                    self.item.row,
+                    False,
+                    "Cancelled"
+                )
 
-    def download_video(self, url):
+                return
 
-        try:
-
-            opts = {
-                **self.base_opts(),
-
-                "noplaylist": True,
-
-                "format": "bv*+ba/b",
-
-                "merge_output_format": "mp4",
-
-                "outtmpl": os.path.join(
-                    VIDEO_DIR,
-                    "%(title)s.%(ext)s"
-                ),
-
-                "postprocessors": [
-                    {
-                        "key": "FFmpegMetadata"
-                    },
-                    {
-                        "key": "EmbedThumbnail"
-                    },
-                ],
-            }
-
-            with yt_dlp.YoutubeDL(opts) as ydl:
-
-                ydl.download([url])
-
-            return True
-
-        except Exception as e:
-
-            self.log.emit(str(e))
-
-            return False
-
-    # ---------------- PLAYLIST AUDIO ----------------
-
-    def download_playlist_audio(self, url):
-
-        try:
-
-            opts = {
-                **self.base_opts(),
-
-                "noplaylist": False,
-
-                "format": "bestaudio/best",
-
-                "outtmpl": os.path.join(
-                    AUDIO_DIR,
-                    "%(playlist)s",
-                    "%(playlist_index)s - %(title)s.%(ext)s"
-                ),
-
-                "postprocessors": [
-                    {
-                        "key": "FFmpegExtractAudio",
-                        "preferredcodec": "mp3",
-                        "preferredquality": "320",
-                    },
-                    {
-                        "key": "FFmpegMetadata"
-                    },
-                    {
-                        "key": "EmbedThumbnail"
-                    },
-                ],
-            }
-
-            with yt_dlp.YoutubeDL(opts) as ydl:
-
-                ydl.download([url])
-
-            return True
-
-        except Exception as e:
-
-            self.log.emit(str(e))
-
-            return False
-
-    # ---------------- PLAYLIST VIDEO ----------------
-
-    def download_playlist_video(self, url):
-
-        try:
-
-            opts = {
-                **self.base_opts(),
-
-                "noplaylist": False,
-
-                "format": "bv*+ba/b",
-
-                "merge_output_format": "mp4",
-
-                "outtmpl": os.path.join(
-                    VIDEO_DIR,
-                    "%(playlist)s",
-                    "%(playlist_index)s - %(title)s.%(ext)s"
-                ),
-
-                "postprocessors": [
-                    {
-                        "key": "FFmpegMetadata"
-                    },
-                    {
-                        "key": "EmbedThumbnail"
-                    },
-                ],
-            }
-
-            with yt_dlp.YoutubeDL(opts) as ydl:
-
-                ydl.download([url])
-
-            return True
-
-        except Exception as e:
-
-            self.log.emit(str(e))
-
-            return False
-
-    # ---------------- IMAGE ----------------
-
-    def download_image(self, url):
-
-        try:
-
-            opts = {
-                **self.base_opts(),
-
-                "noplaylist": True,
-
-                "skip_download": True,
-
-                "outtmpl": os.path.join(
-                    IMAGE_DIR,
-                    "%(title)s.%(ext)s"
-                ),
-
-                "postprocessors": [
-                    {
-                        "key": "FFmpegThumbnailsConvertor",
-                        "format": "webp",
-                    }
-                ],
-            }
-
-            with yt_dlp.YoutubeDL(opts) as ydl:
-
-                ydl.download([url])
-
-            return True
-
-        except Exception as e:
-
-            self.log.emit(str(e))
-
-            return False
+            self.finished_download.emit(
+                self.item.row,
+                False,
+                error_text
+            )
 
 
-# ---------------- MAIN APP ----------------
+# =========================================================
+# MAIN WINDOW
+# =========================================================
 
-class App(QtWidgets.QWidget):
+class App(QWidget):
 
     def __init__(self):
 
         super().__init__()
 
-        self.setWindowTitle("yt-dlp GUI - by uzi2k2")
+        self.setWindowTitle(
+            "yt-dlp GUI - by uzi2k2"
+        )
 
-        icon_path = os.path.join(BASE_DIR, "app_icon.ico")
+        self.resize(1250, 720)
+
+        icon_path = os.path.join(
+            BASE_DIR,
+            "app_icon.ico"
+        )
 
         if os.path.exists(icon_path):
-
             self.setWindowIcon(QIcon(icon_path))
 
         self.queue = []
 
-        self.worker = None
-        self.current = None
-
-        self.running = False
+        self.current_worker = None
 
         self.done_count = 0
         self.fail_count = 0
         self.cancel_count = 0
 
-        # ---------------- UI ----------------
+        self.running = False
 
-        self.url = QtWidgets.QLineEdit()
+        self.build_ui()
 
-        self.url.setPlaceholderText(
-            "Paste URL"
+    # =====================================================
+
+    def build_ui(self):
+
+        self.setStyleSheet("""
+            QWidget {
+                background-color: #1e1e1e;
+                color: white;
+                font-size: 14px;
+            }
+
+            QPlainTextEdit,
+            QLineEdit,
+            QComboBox {
+                background-color: #2a2a2a;
+                border: 1px solid #3c3c3c;
+                border-radius: 6px;
+                padding: 6px;
+            }
+
+            QPushButton {
+                background-color: #2d2d2d;
+                border: 1px solid #3c3c3c;
+                border-radius: 6px;
+                padding: 6px 12px;
+            }
+
+            QPushButton:hover {
+                background-color: #3a3a3a;
+            }
+
+            QTableWidget {
+                background-color: #232323;
+                border: 1px solid #3c3c3c;
+                gridline-color: #2f2f2f;
+            }
+
+            QHeaderView::section {
+                background-color: #2b2b2b;
+                padding: 6px;
+                border: none;
+            }
+
+            QProgressBar {
+                border: 1px solid #444;
+                border-radius: 5px;
+                text-align: center;
+                background-color: #2b2b2b;
+            }
+
+            QProgressBar::chunk {
+                background-color: #00aa55;
+                border-radius: 5px;
+            }
+        """)
+
+        main_layout = QVBoxLayout(self)
+
+        params_box = QGroupBox("Parameters")
+
+        params_layout = QGridLayout()
+
+        self.url_input = QPlainTextEdit()
+
+        self.url_input.setPlaceholderText(
+            "Paste one or multiple URLs..."
         )
 
-        self.mode = QtWidgets.QComboBox()
+        self.url_input.setFixedHeight(78)
 
-        self.mode.addItems([
+        self.path_input = QtWidgets.QLineEdit()
+
+        self.path_input.setText(
+            get_download_dir()
+        )
+
+        self.path_input.setFixedHeight(32)
+
+        self.browse_btn = QPushButton(
+            "Browse..."
+        )
+
+        self.mode_combo = QComboBox()
+
+        self.mode_combo.addItems([
             "Audio",
             "Video",
             "Image",
             "Playlist Audio",
-            "Playlist Video"
+            "Playlist Video",
+            "Playlist Image",
         ])
 
-        self.add_btn = QtWidgets.QPushButton("Add to Queue")
+        self.add_btn = QPushButton("+")
 
-        self.start_btn = QtWidgets.QPushButton("Start Downloading Queue")
+        params_layout.addWidget(QLabel("Video URL(s)"), 0, 0)
+        params_layout.addWidget(self.url_input, 0, 1, 1, 4)
 
-        self.clear_btn = QtWidgets.QPushButton(
-            "Clear Queue"
+        params_layout.addWidget(QLabel("Save to"), 1, 0)
+        params_layout.addWidget(self.path_input, 1, 1)
+        params_layout.addWidget(self.browse_btn, 1, 2)
+        params_layout.addWidget(self.mode_combo, 1, 3)
+        params_layout.addWidget(self.add_btn, 1, 4)
+
+        params_box.setLayout(params_layout)
+
+        main_layout.addWidget(params_box)
+
+        downloads_group = QGroupBox("Downloads")
+
+        downloads_layout = QVBoxLayout(downloads_group)
+
+        self.table = QTableWidget()
+
+        self.table.setColumnCount(6)
+
+        self.table.setHorizontalHeaderLabels([
+            "Title",
+            "Mode",
+            "Progress",
+            "Status",
+            "Speed",
+            "ETA",
+        ])
+
+        self.table.verticalHeader().setVisible(False)
+
+        self.table.setSelectionBehavior(
+            QTableWidget.SelectionBehavior.SelectRows
         )
 
-        self.cancel_btn = QtWidgets.QPushButton(
-            "Cancel Queue"
+        self.table.setEditTriggers(
+            QTableWidget.EditTrigger.NoEditTriggers
         )
 
-        self.update_btn = QtWidgets.QPushButton(
-            "Update yt-dlp"
+        header = self.table.horizontalHeader()
+
+        header.setSectionResizeMode(
+            0,
+            QHeaderView.ResizeMode.Stretch
         )
 
-        self.list = QueueList()
+        downloads_layout.addWidget(self.table)
 
-        self.progress = QtWidgets.QLabel(
-            "Idle"
-        )
+        main_layout.addWidget(downloads_group)
 
-        self.stats = QtWidgets.QLabel(
+        bottom_frame = QFrame()
+
+        bottom_layout = QHBoxLayout(bottom_frame)
+
+        self.clear_btn = QPushButton("🗑 Clear")
+        self.cancel_btn = QPushButton("✖ Cancel")
+        self.download_btn = QPushButton("⬇ Download")
+
+        self.stats_label = QLabel(
             "Done: 0 | Failed: 0 | Cancelled: 0"
         )
 
-        # ---------------- LAYOUT ----------------
+        bottom_layout.addWidget(self.clear_btn)
+        bottom_layout.addWidget(self.cancel_btn)
+        bottom_layout.addWidget(self.stats_label)
+        bottom_layout.addStretch()
+        bottom_layout.addWidget(self.download_btn)
 
-        layout = QtWidgets.QVBoxLayout(self)
+        main_layout.addWidget(bottom_frame)
 
-        layout.addWidget(self.url)
-        layout.addWidget(self.mode)
+        self.browse_btn.clicked.connect(self.browse)
+        self.add_btn.clicked.connect(self.add_to_queue)
+        self.download_btn.clicked.connect(self.start_queue)
+        self.clear_btn.clicked.connect(self.clear_queue)
+        self.cancel_btn.clicked.connect(self.cancel_current)
 
-        layout.addWidget(self.add_btn)
-        layout.addWidget(self.start_btn)
-        layout.addWidget(self.clear_btn)
-        layout.addWidget(self.cancel_btn)
-        layout.addWidget(self.update_btn)
+    # =====================================================
 
-        layout.addWidget(self.list)
+    def browse(self):
 
-        layout.addWidget(self.progress)
-        layout.addWidget(self.stats)
-
-        # ---------------- SIGNALS ----------------
-
-        self.add_btn.clicked.connect(
-            self.add
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Select Download Folder",
+            self.path_input.text()
         )
 
-        self.start_btn.clicked.connect(
-            self.start
-        )
+        if folder:
 
-        self.clear_btn.clicked.connect(
-            self.clear
-        )
+            self.path_input.setText(folder)
 
-        self.cancel_btn.clicked.connect(
-            self.cancel
-        )
+            set_download_dir(folder)
 
-        self.update_btn.clicked.connect(
-            self.update_ytdlp
-        )
+    # =====================================================
 
-    # ---------------- FETCH TITLE ----------------
+    def add_to_queue(self):
 
-    def fetch_title(self, url, mode):
+        text = self.url_input.toPlainText().strip()
 
-        # SKIP PLAYLIST PARSING
-
-        if "Playlist" in mode:
-
-            return url
-
-        try:
-
-            opts = {
-                "quiet": True,
-                "skip_download": True,
-                "noplaylist": True,
-            }
-
-            with yt_dlp.YoutubeDL(opts) as ydl:
-
-                info = ydl.extract_info(
-                    url,
-                    download=False
-                )
-
-                return info.get(
-                    "title",
-                    url
-                )
-
-        except:
-
-            return url
-
-    # ---------------- UPDATE BUTTON ----------------
-
-    def update_ytdlp(self):
-
-        self.progress.setText(
-            "Updating yt-dlp..."
-        )
-
-        try:
-
-            subprocess.call([
-                sys.executable,
-                "-m",
-                "pip",
-                "install",
-                "-U",
-                "yt-dlp"
-            ])
-
-            QtWidgets.QMessageBox.information(
-                self,
-                "Updated",
-                "yt-dlp has been updated successfully! \n" 
-                "Restarting the app is recommended."
-            )
-
-            self.progress.setText(
-                "yt-dlp updated ✔"
-            )
-
-        except Exception as e:
-
-            QtWidgets.QMessageBox.critical(
-                self,
-                "Error",
-                str(e)
-            )
-
-    # ---------------- ADD ----------------
-
-    def add(self):
-
-        url = sanitize(
-            self.url.text()
-        )
-
-        if not url:
+        if not text:
             return
 
-        mode = self.mode.currentText()
+        urls = [
+            sanitize(u)
+            for u in text.splitlines()
+            if u.strip()
+        ]
 
-        # PREVENT DUPLICATES
+        mode = self.mode_combo.currentText()
 
-        for q in self.queue:
+        for url in urls:
 
-            if q.url == url and q.mode == mode:
+            row = self.table.rowCount()
 
-                self.progress.setText(
-                    "Already in queue — skipped"
-                )
+            self.table.insertRow(row)
 
-                return
+            self.table.setItem(
+                row,
+                0,
+                QTableWidgetItem("Fetching title...")
+            )
 
-        title = self.fetch_title(
-            url,
-            mode
+            self.table.setItem(
+                row,
+                1,
+                QTableWidgetItem(mode)
+            )
+
+            progress = QProgressBar()
+
+            progress.setValue(0)
+
+            self.table.setCellWidget(
+                row,
+                2,
+                progress
+            )
+
+            self.table.setItem(
+                row,
+                3,
+                QTableWidgetItem("Queued")
+            )
+
+            self.table.setItem(
+                row,
+                4,
+                QTableWidgetItem("-")
+            )
+
+            self.table.setItem(
+                row,
+                5,
+                QTableWidgetItem("-")
+            )
+
+            item = QueueItem(
+                url=url,
+                mode=mode,
+                row=row
+            )
+
+            self.queue.append(item)
+
+            title_worker = TitleWorker(
+                row,
+                url,
+                mode
+            )
+
+            title_worker.done.connect(
+                self.set_title
+            )
+
+            title_worker.start()
+
+            item._title_worker = title_worker
+
+        self.url_input.clear()
+
+    # =====================================================
+
+    def set_title(
+        self,
+        row,
+        title,
+        is_playlist
+    ):
+
+        display = (
+            f"📂 {title}"
+            if is_playlist
+            else title
         )
 
-        item = QueueItem(
-            url=url,
-            mode=mode,
-            title=title
+        self.table.setItem(
+            row,
+            0,
+            QTableWidgetItem(display)
         )
 
-        self.queue.append(item)
+    # =====================================================
 
-        self.list.addItem(
-            f"{item.mode} -> {title}"
-        )
-
-        self.progress.setText(
-            "Added to queue ✔"
-        )
-
-        self.url.clear()
-
-    # ---------------- CLEAR ----------------
-
-    def clear(self):
-
-        self.queue.clear()
-
-        self.list.clear()
-
-        self.progress.setText(
-            "Queue cleared"
-        )
-
-    # ---------------- START ----------------
-
-    def start(self):
+    def start_queue(self):
 
         if self.running:
             return
@@ -651,125 +948,176 @@ class App(QtWidgets.QWidget):
 
         self.running = True
 
-        self.next()
+        self.download_next()
 
-    # ---------------- NEXT ----------------
+    # =====================================================
 
-    def next(self):
+    def download_next(self):
 
         if not self.queue:
 
             self.running = False
 
-            self.progress.setText(
-                "Queue finished ✔"
-            )
-
             return
 
-        self.current = self.queue.pop(0)
+        item = self.queue.pop(0)
 
-        self.worker = Worker(
-            self.current
+        save_dir = self.path_input.text().strip()
+
+        if not save_dir:
+            save_dir = get_download_dir()
+
+        os.makedirs(save_dir, exist_ok=True)
+
+        self.current_worker = DownloadWorker(
+            item,
+            save_dir
         )
 
-        self.worker.progress.connect(
+        self.current_worker.progress.connect(
             self.update_progress
         )
 
-        self.worker.log.connect(
-            self.progress.setText
+        self.current_worker.status.connect(
+            self.update_status
         )
 
-        self.worker.done.connect(
-            self.finished
+        self.current_worker.finished_download.connect(
+            self.download_finished
         )
 
-        self.worker.start()
-
-    # ---------------- PROGRESS ----------------
-
-    def update_progress(self, d):
-
-        self.progress.setText(
-            f"{d['pct']} | "
-            f"{d['speed']} | "
-            f"ETA {d['eta']}"
+        self.update_status(
+            item.row,
+            "Starting"
         )
 
-    # ---------------- FINISHED ----------------
+        self.current_worker.start()
 
-    def finished(self, ok):
+    # =====================================================
+
+    def update_progress(
+        self,
+        row,
+        percent,
+        speed,
+        eta
+    ):
+
+        progress = self.table.cellWidget(row, 2)
+
+        if progress:
+            progress.setValue(int(percent))
+
+        self.table.item(row, 4).setText(speed)
+        self.table.item(row, 5).setText(eta)
+
+    # =====================================================
+
+    def update_status(self, row, text):
+
+        self.table.item(row, 3).setText(text)
+
+    # =====================================================
+
+    def download_finished(
+        self,
+        row,
+        ok,
+        message
+    ):
+
+        self.cancel_btn.setEnabled(True)
 
         if ok:
 
             self.done_count += 1
 
-            self.list.addItem(
-                "✔ Done"
-            )
+            self.update_status(row, "Done")
+
+            bar = self.table.cellWidget(row, 2)
+
+            if bar:
+                bar.setValue(100)
 
         else:
 
-            self.fail_count += 1
+            if message == "Cancelled":
 
-            self.list.addItem(
-                "✖ Failed"
+                self.cancel_count += 1
+
+                self.update_status(
+                    row,
+                    "Cancelled"
+                )
+
+            else:
+
+                self.fail_count += 1
+
+                self.update_status(
+                    row,
+                    f"Failed: {message}"
+                )
+
+        self.stats_label.setText(
+            f"Done: {self.done_count} | "
+            f"Failed: {self.fail_count} | "
+            f"Cancelled: {self.cancel_count}"
+        )
+
+        self.current_worker = None
+
+        QtCore.QTimer.singleShot(
+            300,
+            self.download_next
+        )
+
+    # =====================================================
+
+    def cancel_current(self):
+
+        if not self.current_worker:
+            return
+
+        self.current_worker.stop()
+
+        self.update_status(
+            self.current_worker.item.row,
+            "Cancelling..."
+        )
+
+        self.cancel_btn.setEnabled(False)
+
+    # =====================================================
+
+    def clear_queue(self):
+
+        if self.running:
+
+            QMessageBox.warning(
+                self,
+                "Busy",
+                "Cannot clear while downloading."
             )
 
-        self.stats.setText(
-            f"Done: {self.done_count} | "
-            f"Failed: {self.fail_count} | "
-            f"Cancelled: {self.cancel_count}"
-        )
-
-        self.current = None
-
-        self.next()
-
-    # ---------------- CANCEL ----------------
-
-    def cancel(self):
-
-        if not self.worker:
             return
 
-        if not self.running:
-            return
+        self.queue.clear()
 
-        self.worker.stop()
-
-        self.worker.terminate()
-
-        self.cancel_count += 1
-
-        self.stats.setText(
-            f"Done: {self.done_count} | "
-            f"Failed: {self.fail_count} | "
-            f"Cancelled: {self.cancel_count}"
-        )
-
-        self.progress.setText(
-            "Cancelled current download"
-        )
-
-        self.current = None
-
-        self.next()
+        self.table.setRowCount(0)
 
 
-# ---------------- MAIN ----------------
+# =========================================================
+# MAIN
+# =========================================================
 
 if __name__ == "__main__":
 
-    app = QtWidgets.QApplication(sys.argv)
+    app = QApplication(sys.argv)
 
-    ensure_dirs()
+    window = App()
 
-    w = App()
-
-    w.resize(900, 760)
-
-    w.show()
+    window.show()
 
     sys.exit(app.exec())
+    

@@ -16,7 +16,7 @@ A graphical interface for the command-line tool [yt-dlp](https://github.com/yt-d
 
 
 ## Portable Release:
-Prebuilt Windows versions are available in the [**Releases** section](https://github.com/uzi2k2/yt-dlp-gui/releases).
+Prebuilt Windows versions are available in the [Releases section](https://github.com/uzi2k2/yt-dlp-gui/releases).
 ✔ No Python required  
 ✔ No setup required  
 ✔ FFmpeg included in release builds  

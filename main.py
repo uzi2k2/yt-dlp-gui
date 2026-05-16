@@ -48,6 +48,25 @@ else:
 
 
 # =========================================================
+# RESOURCE PATHS
+# =========================================================
+
+def resource_path(relative_path):
+
+    if hasattr(sys, "_MEIPASS"):
+
+        return os.path.join(
+            sys._MEIPASS,
+            relative_path
+        )
+
+    return os.path.join(
+        BASE_DIR,
+        relative_path
+    )
+
+
+# =========================================================
 # FFMPEG PATHS
 # =========================================================
 
@@ -75,7 +94,7 @@ ATOMICPARSLEY_EXE = os.path.join(
 DEFAULT_DOWNLOAD_DIR = os.path.join(
     os.path.expanduser("~"),
     "Downloads",
-    "yt-dlp GUI"
+    "YT-DLP-Downloads"
 )
 
 SETTINGS_FILE = os.path.join(
@@ -417,10 +436,6 @@ class DownloadWorker(QtCore.QThread):
                     ],
                 }
 
-            # =================================================
-            # VIDEO
-            # =================================================
-
             elif mode == "Video":
 
                 opts = {
@@ -447,10 +462,6 @@ class DownloadWorker(QtCore.QThread):
                     ],
                 }
 
-            # =================================================
-            # IMAGE
-            # =================================================
-
             elif mode == "Image":
 
                 opts = {
@@ -472,10 +483,6 @@ class DownloadWorker(QtCore.QThread):
                         }
                     ],
                 }
-
-            # =================================================
-            # PLAYLIST AUDIO
-            # =================================================
 
             elif mode == "Playlist Audio":
 
@@ -504,10 +511,6 @@ class DownloadWorker(QtCore.QThread):
                     ],
                 }
 
-            # =================================================
-            # PLAYLIST VIDEO
-            # =================================================
-
             elif mode == "Playlist Video":
 
                 opts = {
@@ -532,10 +535,6 @@ class DownloadWorker(QtCore.QThread):
                     ],
                 }
 
-            # =================================================
-            # PLAYLIST IMAGE
-            # =================================================
-
             elif mode == "Playlist Image":
 
                 opts = {
@@ -559,7 +558,6 @@ class DownloadWorker(QtCore.QThread):
             else:
                 return
 
-            # DEBUG CHECK
             if not os.path.exists(FFMPEG_EXE):
 
                 self.finished_download.emit(
@@ -620,13 +618,15 @@ class App(QWidget):
 
         self.resize(1250, 720)
 
-        icon_path = os.path.join(
-            BASE_DIR,
+        icon_path = resource_path(
             "app_icon.ico"
         )
 
         if os.path.exists(icon_path):
-            self.setWindowIcon(QIcon(icon_path))
+
+            self.setWindowIcon(
+                QIcon(icon_path)
+            )
 
         self.queue = []
 
@@ -812,8 +812,6 @@ class App(QWidget):
         self.clear_btn.clicked.connect(self.clear_queue)
         self.cancel_btn.clicked.connect(self.cancel_current)
 
-    # =====================================================
-
     def browse(self):
 
         folder = QFileDialog.getExistingDirectory(
@@ -827,8 +825,6 @@ class App(QWidget):
             self.path_input.setText(folder)
 
             set_download_dir(folder)
-
-    # =====================================================
 
     def add_to_queue(self):
 
@@ -915,8 +911,6 @@ class App(QWidget):
 
         self.url_input.clear()
 
-    # =====================================================
-
     def set_title(
         self,
         row,
@@ -936,8 +930,6 @@ class App(QWidget):
             QTableWidgetItem(display)
         )
 
-    # =====================================================
-
     def start_queue(self):
 
         if self.running:
@@ -949,8 +941,6 @@ class App(QWidget):
         self.running = True
 
         self.download_next()
-
-    # =====================================================
 
     def download_next(self):
 
@@ -993,8 +983,6 @@ class App(QWidget):
 
         self.current_worker.start()
 
-    # =====================================================
-
     def update_progress(
         self,
         row,
@@ -1011,13 +999,9 @@ class App(QWidget):
         self.table.item(row, 4).setText(speed)
         self.table.item(row, 5).setText(eta)
 
-    # =====================================================
-
     def update_status(self, row, text):
 
         self.table.item(row, 3).setText(text)
-
-    # =====================================================
 
     def download_finished(
         self,
@@ -1072,8 +1056,6 @@ class App(QWidget):
             self.download_next
         )
 
-    # =====================================================
-
     def cancel_current(self):
 
         if not self.current_worker:
@@ -1087,8 +1069,6 @@ class App(QWidget):
         )
 
         self.cancel_btn.setEnabled(False)
-
-    # =====================================================
 
     def clear_queue(self):
 
@@ -1115,9 +1095,18 @@ if __name__ == "__main__":
 
     app = QApplication(sys.argv)
 
+    app_icon = resource_path(
+        "app_icon.ico"
+    )
+
+    if os.path.exists(app_icon):
+
+        app.setWindowIcon(
+            QIcon(app_icon)
+        )
+
     window = App()
 
     window.show()
 
     sys.exit(app.exec())
-    

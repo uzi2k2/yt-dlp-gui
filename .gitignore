@@ -38,4 +38,3 @@ deno/
 # ---------------- PyInstaller ----------------
 build/
 dist/
-*.spec

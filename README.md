@@ -29,6 +29,9 @@ Prebuilt Windows versions are available in the [**Releases** section](https://gi
 
 
 ## Installation (Source):
+### NOTE: Optional setup scripts are available in the `scripts/` folder:
+- `setup.ps1` (PowerShell)
+- `setup.bat` (Windows double-click)
 
 ### Option 1 — PowerShell:
 ```powershell
@@ -84,10 +87,11 @@ python main.py
 
 ## Usage:
 1. Download the application from the [releases](https://github.com/uzi2k2/yt-dlp-gui/releases) as a .zip and then extract it to your desired location. After which open the folder, and run the executable file inside the folder.
-2. Choose output folder, which will be saved for your next download. You can also open "settings.ini" and change it from there (the settings.ini is created when choosing a new save file location and created in the root folder of the executable file).
+2. By default the download folder will be in your Downloads, called YT-DLP-Downloads. If you wish to change the output folder, you can do so by clicking Browse and selecing your next save location, which will be saved for your next download. You can also open "settings.ini" and change it from there (the settings.ini is created when choosing a new save file location and created in the root folder of the executable file).
 3. Downloads:
 - For Audio/Video/Image download, use single video URL(s) (not playlists or mixes), then add them to the queue with "+" button and click Download in the bottom right, to start downloading.
 - For Playlist Audio/Playlist Video/Playlist Image downloads, use a playlist or mix URL, then add the link with "+" button and click Download in the bottom right, to start downloading.
+
 Note: 
 - Multiple URLs can be added (one per line using Enter).
 

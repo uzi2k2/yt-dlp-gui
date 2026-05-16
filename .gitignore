@@ -28,8 +28,6 @@ Images/
 settings.ini
 
 # ---------------- Downloaded dependencies ----------------
-bin/
-ffmpeg/
 deno/
 
 # ---------------- Logs ----------------
